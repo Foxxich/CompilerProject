@@ -1,0 +1,169 @@
+%{
+	#include <stdio.h>
+	#include <stdlib.h>
+	#include <string.h>
+	#include <iostream>
+	#include <string>
+	#include <fstream>
+
+	#include "Data.hpp" 
+	#include "Logic.hpp" 
+	#include "Loops.hpp" 
+
+	void yyerror(char *s);
+	extern FILE *yyin;
+	extern int yylineno;
+	int yylex();
+	int parse_errors = 0;
+%}
+
+%code requires
+{
+    #include <string>
+    #include <vector>
+}
+
+%union sem_rec
+{
+	std::string *pidentifier;
+    long long int num;
+    struct variable *var;
+    struct condition *cond;
+    std::vector<std::string> *cmd;
+}
+
+//Tokens
+%start program
+%token VAR _BEGIN END
+%token UNTIL
+%token FOR
+%token IF WHILE REPEAT DO 
+%token THEN ELSE ENDIF FROM TO DOWNTO ENDFOR ENDWHILE
+%token READ WRITE       
+%token PLUS MINUS TIMES DIV MOD
+%token LE GE LEQ GEQ EQ NEQ
+%token ASSIGN
+%token ERROR 
+%token <pidentifier> pidentifier
+%token <num> num
+
+//Operators precedence
+%left PLUS MINUS
+%left TIMES DIV MOD
+
+//Types
+%type <var> value
+%type <var> identifier
+%type <var> expression
+%type <cond> condition
+%type <cmd> command
+%type <cmd> commands
+
+%%
+program:
+		VAR declarations _BEGIN 				{ registers() }
+		 commands END 							{ finish() }
+		| _BEGIN 								{ registers() }
+		commands END   							{ finish() }
+;
+declarations: declarations ',' pidentifier					{ put_var(*$3, yylineno); }
+		|  declarations ',' pidentifier '[' num ':' num ']'	{ put_in_array(*$3, $5, $7, yylineno); }
+		|  pidentifier										{ put_var(*$1, yylineno); }
+		|  pidentifier '[' num ':' num ']'					{ put_in_array(*$1, $3, $5, yylineno); }
+;
+commands:commands command
+		| command 											
+;
+command: identifier ASSIGN expression ';'					{ assign($1,$3,yylineno); }
+
+		|  IF condition THEN commands ENDIF                 { if_block(); }
+
+		|  IF condition THEN commands ELSE   				{ else_block(); }
+		   commands ENDIF                                   { endif_block(); }
+
+		|  WHILE condition DO commands ENDWHILE				{ while_block(); }
+
+		|  REPEAT 											{ repeat_block(); }
+			commands UNTIL condition ';'					{ until_block(); }
+
+		|  FOR pidentifier FROM
+		value TO value DO                                   { for_to_block(*$2,$4,$6,yylineno); }
+		   commands ENDFOR									{ endfor_to_block(); }
+
+		|  FOR pidentifier FROM
+		value DOWNTO value DO                               { for_downto_block(*$2,$4,$6,yylineno); }
+		   commands ENDFOR									{ endfor_downto_block(); }
+
+		|  READ  identifier ';'								{ read($2,yylineno); }
+
+		|  WRITE value ';'									{ write($2,yylineno); }
+;
+expression: value											;
+		|  value PLUS value									{ func_plus($1, $3, yylineno); }
+		|  value MINUS value								{ func_minus($1,$3,yylineno); }
+		|  value TIMES value								{ func_times($1,$3,yylineno); }
+		|  value DIV value									{ func_div($1,$3,yylineno); }
+		|  value MOD value  								{ func_mod($1,$3,yylineno); }
+;
+condition: value EQ value		                            { condition_eq($1,$3,yylineno); }
+		|  value NEQ value	                                { condition_neq($1,$3,yylineno); }
+		|  value LE value	                                { condition_le($1,$3,yylineno); }
+		|  value GE value                                   { condition_ge($1,$3,yylineno); }
+		|  value LEQ value  	                            { condition_leq($1,$3, yylineno); }
+		|  value GEQ value  	                            { condition_geq($1, $3, yylineno); }
+;
+value:  num													{ $$ = function_number($1,yylineno); }
+		|  identifier 										;
+identifier: pidentifier  									{ $$  = function_pidentifier(*$1, yylineno); }
+		|  pidentifier '['pidentifier']' 					{ $$ = function_pidentifier_array(*$1, *$3, yylineno); }
+		|  pidentifier'['num']'         					{ $$=function_pidentifier(*$1, $3, yylineno); }
+;
+%%
+
+void yyerror(char * err_sym)
+{
+	parse_errors++;
+	std::cout << err_sym << " - unrecognized token (line " << yylineno << ")" << std::endl;
+    std::cout << "### \x1b[31mErrors occured\x1b[0m ###" << std::endl;
+	exit(0);
+}
+
+int main(int argc, char *argv[] )
+{ 
+	if (argc < 3) {
+        std::cout << "### \x1b[31mNot enough arguments\x1b[0m ###" << std::endl;
+        return 0;
+    } 
+	else 
+	{
+		++argv; 
+		std::string input_file_0 = argv[0];
+		std::string input_file_1 = argv[1];
+		std::ofstream outfile;
+		yyin = fopen(input_file_0.c_str(), "r");
+		outfile.open (input_file_1.c_str());
+		if(!yyin) 
+		{
+			std::cout << "### \x1b[31mCan't open file\x1b[0m ###" << std::endl;
+			return 0;
+		}
+		parse_errors = 0;
+		yyparse();
+		int sumErrors = parse_errors + tableErrors + codeErrors;
+		if(sumErrors == 0)
+		{
+			for(int i=0;i<cmds.size();i++)
+			{
+				outfile << cmds[i] << std::endl;
+			}
+			std::cout << "### \x1b[32mCompilation completed successfully\x1b[0m ###" << std::endl;
+		} 
+		else 
+		{
+			std::cout << "### \x1b[31mErrors occured\x1b[0m ###" << std::endl;
+		}
+		fclose(yyin);
+		outfile.close();
+		return 0;
+	}
+}
